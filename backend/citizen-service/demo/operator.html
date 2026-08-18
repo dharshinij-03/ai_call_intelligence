@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Operator Console — Call Queue</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+  h1 { font-size: 1.3rem; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  input, button { font-size: 1rem; padding: 6px 10px; }
+  button { cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #endBtn { background: #b91c1c; color: white; border: none; border-radius: 6px; }
+  .accept { background: #1a7f37; color: white; border: none; border-radius: 6px; }
+  #status { font-size: 0.95rem; opacity: 0.8; margin-bottom: 12px; padding: 8px; border-radius: 6px; background: #8881; }
+  .error { color: #b91c1c; }
+  #queue { border: 1px solid #8888; border-radius: 8px; padding: 12px; min-height: 80px; }
+  .queued-call { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #8884; }
+  .queued-call:last-child { border-bottom: none; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <h1>Operator Console</h1>
+
+  <div id="loginBox">
+    <div class="row">
+      <input id="email" type="email" placeholder="email" value="officer@example.com" />
+      <input id="password" type="password" placeholder="password" value="password123" />
+      <button id="loginBtn">Log in</button>
+    </div>
+    <div id="loginError" class="error"></div>
+  </div>
+
+  <div id="appBox" class="hidden">
+    <h2>Waiting Calls</h2>
+    <div id="queue">No calls waiting.</div>
+
+    <h2>Active Call</h2>
+    <div class="row"><button id="endBtn" disabled>End Call</button></div>
+    <div id="status">Not on a call</div>
+    <audio id="remoteAudio" autoplay></audio>
+  </div>
+
+<script>
+const CITIZEN_SERVICE = "http://localhost:8006";
+const CITIZEN_SERVICE_WS = "ws://localhost:8006";
+const USER_MANAGEMENT_SERVICE = "http://localhost:8003";
+const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+
+let token = null;
+let pc, signalWs, localStream, callSessionId;
+let queue = {};
+
+const statusEl = document.getElementById("status");
+const endBtn = document.getElementById("endBtn");
+
+function setStatus(text, isError = false) {
+  statusEl.textContent = text;
+  statusEl.style.color = isError ? "#b91c1c" : "";
+}
+
+document.getElementById("loginBtn").addEventListener("click", async () => {
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  const body = new URLSearchParams({ username: email, password });
+  const resp = await fetch(`${USER_MANAGEMENT_SERVICE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  if (!resp.ok) {
+    document.getElementById("loginError").textContent = "Login failed — check credentials (must be an operator).";
+    return;
+  }
+  const data = await resp.json();
+  token = data.access_token;
+  document.getElementById("loginBox").classList.add("hidden");
+  document.getElementById("appBox").classList.remove("hidden");
+  connectQueue();
+});
+
+function connectQueue() {
+  const ws = new WebSocket(`${CITIZEN_SERVICE_WS}/ws/operator-queue?token=${encodeURIComponent(token)}`);
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === "call_waiting") {
+      queue[msg.call_session_id] = msg;
+      renderQueue();
+    } else if (msg.type === "call_claimed") {
+      delete queue[msg.call_session_id];
+      renderQueue();
+    }
+  };
+  ws.onerror = () => setStatus("Queue connection error.", true);
+}
+
+function renderQueue() {
+  const el = document.getElementById("queue");
+  const entries = Object.values(queue);
+  if (entries.length === 0) {
+    el.textContent = "No calls waiting.";
+    return;
+  }
+  el.innerHTML = entries
+    .map(
+      (c) => `
+      <div class="queued-call">
+        <span>${escapeHtml(c.citizen_name)} — waiting since ${new Date(c.requested_at).toLocaleTimeString()}</span>
+        <button class="accept" data-id="${c.call_session_id}">Accept</button>
+      </div>`
+    )
+    .join("");
+  el.querySelectorAll(".accept").forEach((btn) =>
+    btn.addEventListener("click", () => acceptCall(btn.dataset.id))
+  );
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+async function acceptCall(id) {
+  const resp = await fetch(`${CITIZEN_SERVICE}/calls/${id}/accept`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) {
+    setStatus("Failed to accept — someone else may have taken it.", true);
+    return;
+  }
+  callSessionId = id;
+  delete queue[id];
+  renderQueue();
+
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+  } catch (err) {
+    setStatus("Microphone access denied: " + err.message, true);
+    return;
+  }
+
+  pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+  pc.ontrack = (event) => {
+    document.getElementById("remoteAudio").srcObject = event.streams[0];
+  };
+  pc.onicecandidate = (event) => {
+    if (event.candidate && signalWs && signalWs.readyState === WebSocket.OPEN) {
+      signalWs.send(JSON.stringify({ type: "ice-candidate", candidate: event.candidate }));
+    }
+  };
+
+  signalWs = new WebSocket(`${CITIZEN_SERVICE_WS}/ws/signal/${callSessionId}?token=${encodeURIComponent(token)}`);
+  setStatus("Connecting to citizen…");
+
+  signalWs.onmessage = async (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === "offer") {
+      await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      signalWs.send(JSON.stringify({ type: "answer", sdp: pc.localDescription }));
+      setStatus("🔴 Live call in progress");
+      endBtn.disabled = false;
+    } else if (msg.type === "ice-candidate" && msg.candidate) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+      } catch (err) {
+        console.warn("Failed to add ICE candidate", err);
+      }
+    } else if (msg.type === "peer_left" || msg.type === "hangup") {
+      setStatus("Call ended by the citizen.");
+      cleanupCall();
+    }
+  };
+
+  signalWs.onerror = () => setStatus("Signaling connection error.", true);
+}
+
+endBtn.addEventListener("click", async () => {
+  await fetch(`${CITIZEN_SERVICE}/calls/${callSessionId}/end`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  setStatus("Call ended.");
+  cleanupCall();
+});
+
+function cleanupCall() {
+  if (pc) pc.close();
+  if (signalWs) signalWs.close();
+  if (localStream) localStream.getTracks().forEach((t) => t.stop());
+  endBtn.disabled = true;
+}
+</script>
+</body>
+</html>

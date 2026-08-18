@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Live Call Transcription Demo</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+  h1 { font-size: 1.3rem; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  select, input, button { font-size: 1rem; padding: 6px 10px; }
+  button { cursor: pointer; }
+  #startBtn { background: #1a7f37; color: white; border: none; border-radius: 6px; }
+  #stopBtn { background: #b91c1c; color: white; border: none; border-radius: 6px; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #status { font-size: 0.9rem; opacity: 0.75; margin-bottom: 12px; }
+  #transcript { border: 1px solid #8888; border-radius: 8px; padding: 12px; min-height: 300px; max-height: 60vh; overflow-y: auto; }
+  .segment { margin-bottom: 14px; }
+  .segment .original { font-weight: 600; }
+  .segment .translated { opacity: 0.8; }
+  .segment .lang { font-size: 0.75rem; opacity: 0.6; text-transform: uppercase; }
+  #interim { opacity: 0.5; font-style: italic; }
+  .error { color: #b91c1c; }
+</style>
+</head>
+<body>
+  <h1>Live Call Transcription Demo</h1>
+
+  <div class="row">
+    <label for="lang">Speaking language:</label>
+    <select id="lang">
+      <option value="hi-IN">Hindi</option>
+      <option value="ta-IN">Tamil</option>
+      <option value="te-IN">Telugu</option>
+      <option value="bn-IN">Bengali</option>
+      <option value="mr-IN">Marathi</option>
+      <option value="kn-IN">Kannada</option>
+      <option value="ml-IN">Malayalam</option>
+      <option value="gu-IN">Gujarati</option>
+      <option value="pa-IN">Punjabi</option>
+      <option value="ur-IN">Urdu</option>
+      <option value="en-IN">English (India)</option>
+    </select>
+
+    <label for="wsUrl">Backend WS URL:</label>
+    <input id="wsUrl" size="34" value="ws://localhost:8001/ws/calls/live" />
+  </div>
+
+  <div class="row">
+    <button id="startBtn">Start Call</button>
+    <button id="stopBtn" disabled>Stop Call</button>
+  </div>
+
+  <div id="status">Idle</div>
+  <div id="transcript"></div>
+
+<script>
+const startBtn = document.getElementById("startBtn");
+const stopBtn = document.getElementById("stopBtn");
+const statusEl = document.getElementById("status");
+const transcriptEl = document.getElementById("transcript");
+const langSelect = document.getElementById("lang");
+const wsUrlInput = document.getElementById("wsUrl");
+
+let audioContext, sourceNode, processorNode, mediaStream, ws;
+let interimEl = null;
+
+function setStatus(text, isError = false) {
+  statusEl.textContent = text;
+  statusEl.className = isError ? "error" : "";
+}
+
+// Downsample a Float32 PCM buffer from `inRate` to 16000 Hz and convert to Int16 PCM.
+function downsampleTo16kInt16(float32Buffer, inRate) {
+  const outRate = 16000;
+  const ratio = inRate / outRate;
+  const outLength = Math.floor(float32Buffer.length / ratio);
+  const out = new Int16Array(outLength);
+  for (let i = 0; i < outLength; i++) {
+    const srcIndex = i * ratio;
+    const i0 = Math.floor(srcIndex);
+    const i1 = Math.min(i0 + 1, float32Buffer.length - 1);
+    const frac = srcIndex - i0;
+    const sample = float32Buffer[i0] * (1 - frac) + float32Buffer[i1] * frac;
+    const clamped = Math.max(-1, Math.min(1, sample));
+    out[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+  }
+  return out;
+}
+
+function appendFinalSegment(msg) {
+  interimEl = null;
+  const div = document.createElement("div");
+  div.className = "segment";
+  div.innerHTML = `
+    <div class="lang">${msg.detected_language || ""}</div>
+    <div class="original">${escapeHtml(msg.original_text)}</div>
+    <div class="translated">→ ${escapeHtml(msg.translated_text || "")}</div>
+  `;
+  transcriptEl.appendChild(div);
+  transcriptEl.scrollTop = transcriptEl.scrollHeight;
+}
+
+function updateInterim(text) {
+  if (!interimEl) {
+    interimEl = document.createElement("div");
+    interimEl.id = "interim";
+    transcriptEl.appendChild(interimEl);
+  }
+  interimEl.textContent = text;
+  transcriptEl.scrollTop = transcriptEl.scrollHeight;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+async function startCall() {
+  startBtn.disabled = true;
+  transcriptEl.innerHTML = "";
+  interimEl = null;
+
+  const lang = langSelect.value;
+  let url = `${wsUrlInput.value}?language_code=${encodeURIComponent(lang)}`;
+
+  setStatus("Requesting location…");
+  try {
+    const position = await new Promise((resolve, reject) =>
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: true,
+        timeout: 8000,
+      })
+    );
+    url += `&lat=${position.coords.latitude}&lng=${position.coords.longitude}`;
+  } catch (err) {
+    console.warn("Location unavailable, continuing without it:", err.message);
+  }
+
+  ws = new WebSocket(url);
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = async () => {
+    setStatus("Connected — requesting microphone…");
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+    } catch (err) {
+      setStatus("Microphone access denied: " + err.message, true);
+      ws.close();
+      startBtn.disabled = false;
+      return;
+    }
+
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    sourceNode = audioContext.createMediaStreamSource(mediaStream);
+    processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+
+    processorNode.onaudioprocess = (event) => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const input = event.inputBuffer.getChannelData(0);
+      const pcm16 = downsampleTo16kInt16(input, audioContext.sampleRate);
+      ws.send(pcm16.buffer);
+    };
+
+    sourceNode.connect(processorNode);
+    processorNode.connect(audioContext.destination);
+
+    setStatus("🔴 Live — speak now");
+    stopBtn.disabled = false;
+  };
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === "started") {
+      setStatus(`🔴 Live — call ${msg.call_id}`);
+    } else if (msg.type === "interim") {
+      updateInterim(msg.original_text);
+    } else if (msg.type === "final") {
+      appendFinalSegment(msg);
+    } else if (msg.type === "error") {
+      setStatus("Error: " + msg.message, true);
+    }
+  };
+
+  ws.onerror = () => setStatus("WebSocket error — is the backend running?", true);
+
+  ws.onclose = () => {
+    setStatus("Call ended");
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  };
+}
+
+function stopCall() {
+  if (processorNode) processorNode.disconnect();
+  if (sourceNode) sourceNode.disconnect();
+  if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
+  if (audioContext) audioContext.close();
+  if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+}
+
+startBtn.addEventListener("click", startCall);
+stopBtn.addEventListener("click", stopCall);
+</script>
+</body>
+</html>
