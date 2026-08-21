@@ -10,6 +10,7 @@ export function Spinner({ label = 'Loading…' }: { label?: string }) {
         />
       </div>
       <p className="text-sm text-slate-400 font-medium">{label}</p>
+
     </div>
   );
 }

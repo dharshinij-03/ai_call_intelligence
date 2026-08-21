@@ -54,6 +54,7 @@ export function StatTile({ label, value, tone = 'default', icon: Icon, iconColor
           style={{ background: iconBg ?? '#eef2ff', color: iconColor ?? '#6366f1' }}
         >
           <Icon size={22} />
+          
         </div>
       )}
       <div className="stat-card-label">{label}</div>
