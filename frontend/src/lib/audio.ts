@@ -24,7 +24,9 @@ export function downsampleTo16kInt16(float32Buffer: Float32Array, inRate: number
 
 export interface STTState {
   recording: boolean;
-  rec: SpeechRecognition | null;
+  // Web Speech API types aren't consistently available in TS DOM libs,
+  // so we keep this as `any` for compatibility.
+  rec: any | null;
   lang: string;
 }
 

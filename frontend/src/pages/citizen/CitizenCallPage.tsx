@@ -52,7 +52,7 @@ export function CitizenCallPage() {
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const speechRecRef = useRef<any>(null);
   const lineIdRef = useRef(0);
-  const speakingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const speakingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const SPEAKING_THRESHOLD = 5; // Volume threshold to detect speaking
   const SPEAKING_TIMEOUT = 1500; // Wait 1.5s after silence to stop recording
 
@@ -121,7 +121,11 @@ export function CitizenCallPage() {
     setConnecting(false);
   }
 
-  async function startTranscriptionTee(stream: MediaStream, callSessionId: string) {
+  async function startTranscriptionTee(
+    stream: MediaStream,
+    callSessionId: string,
+    location?: { latitude: number; longitude: number; accuracy: number } | null
+  ) {
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     const audioContext = new AudioCtx();
     audioContextRef.current = audioContext;
@@ -135,7 +139,10 @@ export function CitizenCallPage() {
     (window as any)._activeAudioContext = audioContext;
 
     const wsBaseUrl = SERVICE_URLS.callManagementWs.replace('localhost', '127.0.0.1');
-    const url = `${wsBaseUrl}/ws/calls/live?caller_id=${encodeURIComponent(callSessionId)}&language_code=${selectedLang}`;
+    const lat = location?.latitude;
+    const lng = location?.longitude;
+    const locationQs = lat != null && lng != null ? `&lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}` : '';
+    const url = `${wsBaseUrl}/ws/calls/live?caller_id=${encodeURIComponent(callSessionId)}&language_code=${encodeURIComponent(selectedLang)}${locationQs}`;
     console.log('[TRANSCRIPTION] Connecting to WebSocket:', url);
 
     const ws = new WebSocket(url);
@@ -267,7 +274,7 @@ export function CitizenCallPage() {
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
       });
       localStreamRef.current = stream;
-      await startTranscriptionTee(stream, session.id);
+      await startTranscriptionTee(stream, session.id, userLocation);
 
       // Web Speech API for instant client-side real-time speech display
       const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;

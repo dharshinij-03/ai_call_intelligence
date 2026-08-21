@@ -218,4 +218,7 @@ export interface ComplaintStatusOut {
   assignment_status: string | null;
   officer_name: string | null;
   sla_due_at: string | null;
+  feedback_submitted: boolean;
+  feedback_rating: number | null;
+  feedback_comments: string | null;
 }

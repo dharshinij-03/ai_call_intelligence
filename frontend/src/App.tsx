@@ -10,6 +10,7 @@ import { CitizenCallPage } from './pages/citizen/CitizenCallPage';
 import { CitizenComplaintsPage } from './pages/citizen/CitizenComplaintsPage';
 
 import { OperatorQueuePage } from './pages/operator/OperatorQueuePage';
+import { OperatorComplaintsPage } from './pages/operator/OperatorComplaintsPage';
 
 import { OfficerComplaintsPage } from './pages/officer/OfficerComplaintsPage';
 import { OfficerComplaintDetailPage } from './pages/officer/OfficerComplaintDetailPage';
@@ -65,6 +66,14 @@ export default function App() {
           element={
             <ProtectedRoute roles={['operator']}>
               <OperatorQueuePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/operator/complaints"
+          element={
+            <ProtectedRoute roles={['operator']}>
+              <OperatorComplaintsPage />
             </ProtectedRoute>
           }
         />

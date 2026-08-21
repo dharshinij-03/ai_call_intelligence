@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import Column, DateTime, Enum, String, Float
+from sqlalchemy import Column, DateTime, Enum, String, Float, Integer, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -48,3 +48,16 @@ class CallSession(Base):
     latitude = Column(Float, nullable=True, index=True)
     longitude = Column(Float, nullable=True, index=True)
     location_accuracy = Column(Float, nullable=True)  # Accuracy in meters
+
+
+class CitizenFeedback(Base):
+    __tablename__ = "citizen_feedback"
+    __table_args__ = (UniqueConstraint("call_id", "citizen_id", name="uq_feedback_call_citizen"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    call_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    citizen_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    rating = Column(Integer, nullable=False)
+    comments = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -61,7 +61,12 @@ export function OfficerComplaintDetailPage() {
 
   const statusMutation = useMutation({
     mutationFn: (status: AssignmentStatus) => assignmentApi.updateStatus(callId!, status),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['assignment', callId] }),
+    onSuccess: () => {
+      // Refresh this assignment detail
+      queryClient.invalidateQueries({ queryKey: ['assignment', callId] });
+      // Also invalidate citizen complaints so a signed-in citizen client will see updates promptly
+      queryClient.invalidateQueries({ queryKey: ['my-complaints'] });
+    },
   });
 
   const generateRecMutation = useMutation({
