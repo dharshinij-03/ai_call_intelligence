@@ -3,7 +3,7 @@ from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -13,6 +13,29 @@ from app.schemas import CallAnalysisOut
 from app.services import call_management_client, duplicate_service, gemini_service
 
 router = APIRouter()
+
+
+async def _fallback_location_from_call_session(
+    db: AsyncSession, call_id: UUID
+) -> tuple[float | None, float | None]:
+    """Fallback to citizen-service call_sessions coordinates when a call row
+    exists but call-management lat/lng was not captured."""
+    row = (
+        await db.execute(
+            text(
+                """
+                SELECT cs.latitude, cs.longitude
+                FROM calls c
+                JOIN call_sessions cs ON cs.id::text = c.caller_id
+                WHERE c.id = :call_id
+                """
+            ),
+            {"call_id": call_id},
+        )
+    ).mappings().first()
+    if not row:
+        return None, None
+    return row.get("latitude"), row.get("longitude")
 
 
 async def _resolve_cm_uuid(call_id: str) -> UUID:
@@ -60,6 +83,10 @@ async def analyze_call(call_id: str, db: AsyncSession = Depends(get_db)):
 
     # Resolve to the true CM call UUID (may differ from the caller_id UUID)
     resolved_call_uuid = await _resolve_cm_uuid(call_id)
+    latitude = context.latitude
+    longitude = context.longitude
+    if latitude is None or longitude is None:
+        latitude, longitude = await _fallback_location_from_call_session(db, resolved_call_uuid)
 
     # Run AI analysis
     result = gemini_service.analyze_transcript(context.transcript, context.captured_address)
@@ -70,8 +97,8 @@ async def analyze_call(call_id: str, db: AsyncSession = Depends(get_db)):
         exclude_call_id=resolved_call_uuid,
         department=result.department,
         summary=result.summary,
-        latitude=context.latitude,
-        longitude=context.longitude,
+        latitude=latitude,
+        longitude=longitude,
     )
     duplicate_of_call_id = None
     if duplicate is not None:
@@ -79,8 +106,8 @@ async def analyze_call(call_id: str, db: AsyncSession = Depends(get_db)):
 
     field_values = {
         **result.model_dump(),
-        "latitude": context.latitude,
-        "longitude": context.longitude,
+        "latitude": latitude,
+        "longitude": longitude,
         "is_duplicate": duplicate_of_call_id is not None,
         "duplicate_of_call_id": duplicate_of_call_id,
         "transcript_snapshot": context.transcript,

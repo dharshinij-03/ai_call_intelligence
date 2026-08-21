@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models import CallSessionStatus
 
@@ -43,7 +43,15 @@ class ComplaintStatusOut(BaseModel):
     assignment_status: Optional[str] = None
     officer_name: Optional[str] = None
     sla_due_at: Optional[datetime] = None
+    feedback_submitted: bool = False
+    feedback_rating: Optional[int] = None
+    feedback_comments: Optional[str] = None
 
 
 class ComplaintStatusListOut(BaseModel):
     items: List[ComplaintStatusOut]
+
+
+class ComplaintFeedbackIn(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    comments: Optional[str] = Field(default=None, max_length=2000)

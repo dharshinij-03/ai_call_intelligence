@@ -340,7 +340,7 @@ export function RobustVoiceInput() {
 
 export async function VoiceToAIAnswer() {
   const [question, setQuestion] = useState('');
-  const [answer, setAnswer] = useState('');
+  const [answer] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleVoiceQuestion = async () => {

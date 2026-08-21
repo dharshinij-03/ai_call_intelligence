@@ -30,4 +30,12 @@ export const citizenApi = {
 
   myComplaints: (token: string) =>
     apiFetch<{ items: ComplaintStatusOut[] }>(`${BASE}/complaints/mine`, {}, token),
+
+  // Submit feedback for a resolved complaint (rating: 1-5, optional comments)
+  submitFeedback: (token: string, callId: string, rating: number, comments?: string) =>
+    apiFetch(`${BASE}/complaints/${callId}/feedback`, {
+      method: 'POST',
+      body: JSON.stringify({ rating, comments }),
+      headers: { 'Content-Type': 'application/json' },
+    }, token),
 };

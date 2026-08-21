@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
   isSTTSupported,
-  startSpeechToText,
-  stopSpeechToText,
   toggleSpeechToText,
   setSpeechLanguage,
-  isRecording
+  // isRecording is intentionally not imported here; this component only uses toggle + language.
 } from '../lib/audio';
 
 interface SpeechToTextButtonProps {

@@ -26,6 +26,7 @@ const NAV_BY_ROLE: Record<string, { to: string; label: string; icon: React.Eleme
   ],
   operator: [
     { to: '/operator/queue', label: 'Call Queue', icon: Headphones },
+    { to: '/operator/complaints', label: 'All Complaints', icon: FileText },
   ],
   officer: [
     { to: '/officer/complaints', label: 'My Assignments', icon: ClipboardList },
@@ -76,6 +77,7 @@ function useBreadcrumb() {
   if (path === '/citizen/call') return 'Make a Call';
   if (path === '/citizen/complaints') return 'My Complaints';
   if (path === '/operator/queue') return 'Live Call Queue';
+  if (path === '/operator/complaints') return 'All Call Complaints';
   if (path === '/officer/complaints') return 'My Assignments';
   return 'Dashboard';
 }

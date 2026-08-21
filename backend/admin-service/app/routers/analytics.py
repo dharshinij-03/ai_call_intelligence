@@ -24,14 +24,16 @@ async def get_heatmap(db: AsyncSession = Depends(get_db)):
                 text(
                     """
                     SELECT
-                        round(coalesce(ca.latitude, c.latitude)::numeric, 3) AS latitude,
-                        round(coalesce(ca.longitude, c.longitude)::numeric, 3) AS longitude,
+                        round(coalesce(ca.latitude, c.latitude, cs.latitude)::numeric, 3) AS latitude,
+                        round(coalesce(ca.longitude, c.longitude, cs.longitude)::numeric, 3) AS longitude,
                         count(*) AS complaint_count,
                         count(*) FILTER (WHERE ca.urgency = 'critical') AS critical_count,
                         mode() WITHIN GROUP (ORDER BY ca.department) AS dominant_department
                     FROM calls c
                     LEFT JOIN call_analysis ca ON ca.call_id = c.id
-                    WHERE coalesce(ca.latitude, c.latitude) IS NOT NULL
+                    LEFT JOIN call_sessions cs ON cs.id::text = c.caller_id
+                    WHERE coalesce(ca.latitude, c.latitude, cs.latitude) IS NOT NULL
+                      AND coalesce(ca.longitude, c.longitude, cs.longitude) IS NOT NULL
                     GROUP BY 1, 2
                     """
                 )
